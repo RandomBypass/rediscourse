@@ -35,26 +35,24 @@ public class OrderCollector {
 
         @Override
         public void run() {
-            synchronized (orders) {
-                if (orders.isEmpty()) {
-                    return;
-                }
+            if (orders.isEmpty()) {
+                return;
+            }
+            HashSet<OrderDto> toPublish = new HashSet<>(orders);
+            int batchSize = toPublish.size();
+            System.out.println("Starting to publish " + batchSize + " orders");
 
-                int batchSize = orders.size();
-                System.out.println("Starting to publish " + batchSize + " orders");
+            RBatch batch = redissonClient.createBatch();
+            RScoredSortedSetAsync<OrderDto> scoredOrders = batch.getScoredSortedSet(Constants.ORDERS);
+            toPublish.forEach(e -> scoredOrders.addAsync(e.getUserClass().getPriority(), e));
 
-                RBatch batch = redissonClient.createBatch();
-                RScoredSortedSetAsync<OrderDto> scoredOrders = batch.getScoredSortedSet(Constants.ORDERS);
-                orders.forEach(e -> scoredOrders.addAsync(e.getUserClass().getPriority(), e));
-
-                BatchResult<?> result = batch.execute();
-                if (Objects.equals(result.getResponses().size(), batchSize)) {
-                    System.out.println("Successfully pushed " + batchSize + " orders to Redis");
-                    orders.clear();
-                    // Is it possible to publish sortedSet itself?
-                    RTopic topic = redissonClient.getTopic(Constants.TOPIC);
-                    topic.publish("New orders arrived");
-                }
+            BatchResult<?> result = batch.execute();
+            if (Objects.equals(result.getResponses().size(), batchSize)) {
+                System.out.println("Successfully pushed " + batchSize + " orders to Redis");
+                orders.removeAll(toPublish);
+                // Is it possible to publish sortedSet itself?
+                RTopic topic = redissonClient.getTopic(Constants.TOPIC);
+                topic.publish("New orders arrived");
             }
         }
 
